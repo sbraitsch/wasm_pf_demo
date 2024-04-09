@@ -1,10 +1,22 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import Square from "./square";
-import { Slider, Typography, Button, ToggleButton, ToggleButtonGroup, createTheme, ThemeProvider, Switch, FormGroup, FormControlLabel } from "@mui/material";
+import {
+  Slider,
+  Typography,
+  Button,
+  ToggleButton,
+  ToggleButtonGroup,
+  createTheme,
+  ThemeProvider,
+  Switch,
+  FormGroup,
+  FormControlLabel,
+} from "@mui/material";
 import styles from "./page.module.css";
 import init, { find_path } from "../wasm/wasm_pf";
+import { shortestPath } from "./pathfinder";
 
 let mouseDown = false;
 document.body.onmousedown = function () {
@@ -24,28 +36,31 @@ interface GridNode {
 }
 
 const theme = createTheme({
-    palette: {
-      primary: {
-        main: '#ffffff',
-        dark: '#ffffff',
-        light: '#ffffff'
-      },
+  palette: {
+    primary: {
+      main: "#000",
+      dark: "#000",
+      light: "#000",
+      contrastText: "#000",
     },
-  });
+  },
+});
 
 const Maze: React.FC = () => {
   init();
   const sizes = [
-    { x: 5, y: 5, s: 100 },
+    { x: 6, y: 5, s: 100 },
     { x: 40, y: 28, s: 25 },
     { x: 100, y: 60, s: 10 },
   ];
   const [mazeScale, setMazeScale] = useState<number>(2);
   const [heuristic, setHeuristic] = useState(false);
-  const [diagonals, setDiagonals] = useState(false);
+  const [diagonals, setDiagonals] = useState(true);
+  const [wasm, setWasm] = useState(false);
   const [start, setStart] = useState(-1);
   const [end, setEnd] = useState(-1);
   const [walls, setWalls] = useState<number[]>([]);
+  const [resData, setResData] = useState("");
   let [nodes, setNodes] = useState<GridNode[][]>(
     [...Array(sizes[mazeScale - 1].y)].map((e) =>
       Array(sizes[mazeScale - 1].x).fill({
@@ -65,7 +80,7 @@ const Maze: React.FC = () => {
       sizes[mazeScale - 1].s
     }px)`,
     gap: "3px",
-    animation: 'fadeIn 1s'
+    animation: "fadeIn 1s",
   };
 
   let [assignMode, setAssignMode] = useState(0);
@@ -85,37 +100,53 @@ const Maze: React.FC = () => {
       )
     );
     setAssignMode(0);
+    setWalls([]);
+    setResData("");
   };
 
-  const triggerWasm = async () => {
+  const triggerSearch = async () => {
     setAssignMode(3);
     let dimX = sizes[mazeScale - 1].x;
     let dimY = sizes[mazeScale - 1].y;
 
-    let path = find_path(start, end, dimX, dimY, Uint32Array.from(walls), heuristic, diagonals);
+    let timerStart = performance.now();
+    let path = wasm
+      ? find_path(
+          start,
+          end,
+          dimX,
+          dimY,
+          Uint32Array.from(walls),
+          heuristic,
+          diagonals
+        )
+      : shortestPath(start, end, dimX, dimY, walls, heuristic, diagonals);
+    let executionTime = (performance.now() - timerStart).toFixed(1);
 
-    let batchSize = 10;
-
+    let batchSize = mazeScale === 3 ? 100 : 10;
+    let pl = 0;
     for (let i = 0; i < path.length; i += batchSize) {
-        let gridState = [...nodes];
-        if ((path.length - i) < batchSize) {
-            batchSize = path.length - i;
+      let gridState = [...nodes];
+      if (path.length - i < batchSize) {
+        batchSize = path.length - i;
+      }
+      for (let j = i; j < i + batchSize; j++) {
+        let x = path[j] % dimX;
+        let y = Math.floor(path[j] / dimX);
+        let nodeCopy = { ...gridState[y][x] };
+        if (nodeCopy.visited) {
+          nodeCopy.isPath = true;
+          pl++;
+        } else if (nodeCopy.registered) {
+          nodeCopy.visited = true;
+        } else {
+          nodeCopy.registered = true;
         }
-        for(let j = i; j < i + batchSize; j++) {
-            let x = path[j] % dimX;
-            let y = Math.floor(path[j] / dimX);
-            let nodeCopy = { ...gridState[y][x] };
-            if (nodeCopy.visited) {
-                nodeCopy.isPath = true;
-            } else if (nodeCopy.registered) {
-                nodeCopy.visited = true;
-            } else {
-                nodeCopy.registered = true;
-            }
-            gridState[y][x] = nodeCopy;
-        }
-        await new Promise(res => setTimeout(res, 10));
-        setNodes(gridState);
+        gridState[y][x] = nodeCopy;
+      }
+      await new Promise((res) => setTimeout(res, 10));
+      setNodes(gridState);
+      setResData(`Path: ${pl}, Time: ${executionTime}ms`);
     }
   };
 
@@ -123,21 +154,15 @@ const Maze: React.FC = () => {
   switch (assignMode) {
     case 0:
       button = (
-        <Button
-          variant="contained"
-          color="error"
-        >
-          {"Set Start"}
+        <Button variant="contained" color="error">
+          {"Click Start Node"}
         </Button>
       );
       break;
     case 1:
       button = (
-        <Button
-          variant="contained"
-          color="error"
-        >
-          {"Set Target"}
+        <Button variant="contained" color="error">
+          {"Click Target Node"}
         </Button>
       );
       break;
@@ -146,40 +171,44 @@ const Maze: React.FC = () => {
         <Button
           variant="contained"
           color="success"
-          onClick={() => triggerWasm()}
+          onClick={() => triggerSearch()}
         >
-          {"Add Walls and Go"}
+          {"Draw Walls and Start"}
         </Button>
       );
       break;
     case 3:
       button = (
         <Button
-            variant="contained"
-            color="success"
-            onClick={() => handleScaleChange(mazeScale)}
+          variant="contained"
+          color="warning"
+          onClick={() => handleScaleChange(mazeScale)}
         >
-            {"Reset"}
+          {`${resData} | Reset`}
         </Button>
-        );
+      );
       break;
   }
 
   const getColor = (node: GridNode) => {
     if (node.isStart) {
-      return "lightblue";
+      return "cyan";
     } else if (node.isEnd) {
-      return "yellow";
+      return "#62f97b";
+    } else if (node.isWall && assignMode !== 3) {
+      return "whitesmoke";
     } else if (node.isWall) {
-      return "#190D32";
+      return "#000";
     } else if (node.isPath) {
-      return "#9d4f0f";
+      return "red";
     } else if (node.visited) {
-      return "#a5ea5f";
+      return "#ffe925";
     } else if (node.registered) {
-      return "#53504f";
+      return "#b2a7a7";
+    } else if (assignMode === 3) {
+      return "whitesmoke";
     }
-    return "#453bd1";
+    return "#000";
   };
 
   const handleClick = (y: number, x: number) => {
@@ -234,13 +263,45 @@ const Maze: React.FC = () => {
   };
 
   const getIndex = (x: number, y: number) => {
-    return sizes[mazeScale-1].x * y + x;
-  }
+    return sizes[mazeScale - 1].x * y + x;
+  };
+
+  const presetWall = () => {
+    let wl: number[] = [];
+    let x = sizes[mazeScale - 1].x;
+    let y = sizes[mazeScale - 1].y;
+
+    let x1 = Math.floor(x / 3);
+    let count = Math.floor(y / 3) * 2;
+
+    let gridState = [...nodes];
+
+    for (let i = 0; i < count; i++) {
+      let idx1 = x * i + x1;
+      let idx2 = x * (y - i - 1) + x1 * 2;
+      let nodeCopy1 = { ...gridState[i][x1] };
+      let nodeCopy2 = { ...gridState[y - i - 1][x1 * 2] };
+      nodeCopy1.isWall = true;
+      nodeCopy2.isWall = true;
+      gridState[i][x1] = nodeCopy1;
+      gridState[y - i - 1][x1 * 2] = nodeCopy2;
+      wl.push(idx1);
+      wl.push(idx2);
+    }
+    setNodes(gridState);
+    setWalls(wl);
+  };
+
+  const wallPresetButton = (
+    <Button variant="contained" color="warning" onClick={() => presetWall()}>
+      {"Add Wall Preset"}
+    </Button>
+  );
 
   return (
     <ThemeProvider theme={theme}>
       <div className={styles.sliderGrid}>
-        <Typography id="x-slider" gutterBottom color={"white"}>
+        <Typography id="x-slider" gutterBottom color={"black"}>
           Maze Scale:
         </Typography>
         <Slider
@@ -254,10 +315,42 @@ const Maze: React.FC = () => {
           value={mazeScale}
           onChange={(_, v) => handleScaleChange(v as number)}
         />
-        <FormGroup>
-            <FormControlLabel control={<Switch color="primary" checked={heuristic} onChange={() => setHeuristic(!heuristic)}/>} label="Heuristic" />
-            <FormControlLabel control={<Switch color="primary" checked={diagonals} onChange={() => setDiagonals(!diagonals)}/>} label="Diagonals" />
+        <FormGroup color="primary" row>
+          <FormControlLabel
+            color="primary"
+            control={
+              <Switch
+                color="primary"
+                checked={heuristic}
+                onChange={() => setHeuristic(!heuristic)}
+              />
+            }
+            label={<Typography color="primary">Heuristic</Typography>}
+          />
+          <FormControlLabel
+            color="primary"
+            control={
+              <Switch
+                color="primary"
+                checked={diagonals}
+                onChange={() => setDiagonals(!diagonals)}
+              />
+            }
+            label={<Typography color="primary">Diagonal</Typography>}
+          />
+          <FormControlLabel
+            color="primary"
+            control={
+              <Switch
+                color="primary"
+                checked={wasm}
+                onChange={() => setWasm(!wasm)}
+              />
+            }
+            label={<Typography color="primary">WASM</Typography>}
+          />
         </FormGroup>
+        {wallPresetButton}
         {button}
       </div>
 

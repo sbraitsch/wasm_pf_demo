@@ -83,7 +83,7 @@ pub fn shortest_path(
     search_trace
 }
 
-fn get_adjacent<'a>(idx: usize, dim_x: usize, dim_y: usize, diagonals: bool) -> Vec<usize> {
+fn get_adjacent(idx: usize, dim_x: usize, dim_y: usize, diagonals: bool) -> Vec<usize> {
     let x = idx % dim_x;
     let y = idx / dim_x;
 
@@ -124,7 +124,10 @@ fn manhattan(idx: usize, target: usize, dim_x: usize) -> usize {
     let (x1, y1) = idx_to_coords(idx, dim_x);
     let (x2, y2) = idx_to_coords(target, dim_x);
 
-    ((x2 - x1).abs() + (y2 - y1).abs()) as usize
+    let x_dif = (x2 - x1).abs() as usize;
+    let y_dif = (y2 - y1).abs() as usize;
+
+    x_dif + y_dif
 }
 
 fn idx_to_coords(idx: usize, dim_x: usize) -> (i32, i32) {
